@@ -26,21 +26,32 @@ jobs:
             set -eu
             cd /data
 
-            rm -rf _public
-            mkdir -p _public
-            cp -f styles.css _public/ || true
+            BUILD_DIR=_build
+            ARTIFACT_DIR=_public
+            rm -rf "$BUILD_DIR" "$ARTIFACT_DIR"
+            mkdir -p "$BUILD_DIR" "$ARTIFACT_DIR"
+            cp -f styles.css "$ARTIFACT_DIR/" || true
 
-            # Build each course (folder/*/src)
+            # For each course (*/src)
             for d in */src ; do
               [ -d "$d" ] || continue
               course="${d%/src}"
               echo "Building course: $course"
 
-              mkdir -p "$course/site"
+              mkdir -p "$course/site" "$BUILD_DIR/$course"
               cp -f styles.css "$course/site/" || true
 
-              # Build all .tex files
+              # 1) Preprocess .tex: map tcolorbox -> quote (keeps content in HTML)
               for f in "$d"/*.tex ; do
+                [ -e "$f" ] || continue
+                base="$(basename "$f")"
+                sed -e 's/\\begin{tcolorbox}/\\begin{quote}/g' \
+                    -e 's/\\end{tcolorbox}/\\end{quote}/g' \
+                  "$f" > "$BUILD_DIR/$course/$base"
+              done
+
+              # 2) Build each preprocessed .tex (so \input{} also uses processed files)
+              for f in "$BUILD_DIR/$course"/*.tex ; do
                 [ -e "$f" ] || continue
                 base="$(basename "$f" .tex)"
                 echo "  - $f -> $course/site/${base}.html"
@@ -49,18 +60,18 @@ jobs:
                   --to=html5 \
                   --mathjax \
                   --template /data/_template.html \
+                  --resource-path="$BUILD_DIR/$course" \
                   --toc --number-sections \
                   -o "$course/site/${base}.html"
-
-                # Optional PDF (keep or remove)
                 pandoc "$f" -o "$course/site/${base}.pdf" || true
               done
 
-              # Course index: plain list of built pages
-              if [ -f "$course/src/main.tex" ]; then
-                pandoc "$course/src/main.tex" \
+              # 3) Course index: prefer main.tex if present
+              if [ -f "$BUILD_DIR/$course/main.tex" ]; then
+                pandoc "$BUILD_DIR/$course/main.tex" \
                   --from=latex --to=html5 --mathjax \
                   --template /data/_template.html \
+                  --resource-path="$BUILD_DIR/$course" \
                   --toc --number-sections \
                   -o "$course/site/index.html"
               else
@@ -78,21 +89,22 @@ jobs:
                 } > "$course/site/index.html"
               fi
 
-              mkdir -p "_public/$course"
-              cp -R "$course/site/." "_public/$course/"
+              # 4) Copy course site to artifact
+              mkdir -p "$ARTIFACT_DIR/$course"
+              cp -R "$course/site/." "$ARTIFACT_DIR/$course/"
             done
 
-            # Root landing page listing courses from the artifact
+            # Root landing page
             {
               printf '%s\n' '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Notes</title><link rel="stylesheet" href="styles.css"></head><body>'
               printf '%s\n' '<h1>Course Notes</h1><ul>'
-              for c in _public/* ; do
+              for c in "$ARTIFACT_DIR"/* ; do
                 [ -d "$c" ] || continue
                 name="$(basename "$c")"
                 printf '<li><a href="%s/">%s</a></li>\n' "$name" "$name"
               done
               printf '%s\n' '</ul></body></html>'
-            } > "_public/index.html"
+            } > "$ARTIFACT_DIR/index.html"
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
