@@ -1,0 +1,115 @@
+name: Build LaTeX to GitHub Pages
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build HTML/PDF with Pandoc (Docker)
+        uses: addnab/docker-run-action@v3
+        with:
+          image: pandoc/latex:latest
+          options: -v ${{ github.workspace }}:/data
+          run: |
+            set -euo pipefail
+            cd /data
+
+            # Where we stage the site artifact for Pages
+            rm -rf _public
+            mkdir -p _public
+
+            # Copy shared assets to root of site
+            cp -f styles.css _public/ || true
+
+            # Loop through each course folder that has a src/
+            for d in */src ; do
+              [ -d "$d" ] || continue
+              course="${d%/src}"
+              echo "Building course: $course"
+
+              mkdir -p "$course/site"
+              # Ensure each course site has its own copy of styles.css
+              cp -f styles.css "$course/site/" || true
+
+              shopt -s nullglob
+              for f in "$d"/*.tex ; do
+                base="$(basename "$f" .tex)"
+                echo "  - $f -> $course/site/${base}.html"
+                pandoc "$f" \
+                  --from=latex \
+                  --to=html5 \
+                  --mathjax \
+                  --template /data/_template.html \
+                  --toc --number-sections \
+                  -o "$course/site/${base}.html"
+
+                # Optional PDF for download per file
+                pandoc "$f" -o "$course/site/${base}.pdf"
+              done
+
+              # If there is a main.tex, make a friendly index.html; otherwise list all pages
+              if [ -f "$d/main.tex" ]; then
+                pandoc "$d/main.tex" \
+                  --from=latex --to=html5 --mathjax \
+                  --template /data/_template.html \
+                  --toc --number-sections \
+                  -o "$course/site/index.html"
+              else
+                # simple index for the course
+                {
+                  echo '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'"$course"'</title><link rel="stylesheet" href="styles.css"></head><body>'
+                  echo '<h1>'"$course"'</h1><ul>'
+                  for h in "$course/site/"*.html ; do
+                    file="$(basename "$h")"
+                    [ "$file" = "index.html" ] && continue
+                    name="${file%.html}"
+                    echo "<li><a href=\"$file\">$name</a> &nbsp;(<a href=\"$name.pdf\">pdf</a>)</li>"
+                  done
+                  echo '</ul></body></html>'
+                } > "$course/site/index.html"
+              fi
+
+              # Publish course site under _public/<course>/
+              mkdir -p "_public/$course"
+              cp -R "$course/site/." "_public/$course/"
+            done
+
+            # Root landing page linking all courses
+            {
+              echo '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Notes</title><link rel="stylesheet" href="styles.css"></head><body>'
+              echo '<h1>Course Notes</h1><ul>'
+              for c in */site ; do
+                [ -d "$c" ] || continue
+                course="${c%/site}"
+                echo "<li><a href=\"$course/\">$course</a></li>"
+              done
+              echo '</ul></body></html>'
+            } > "_public/index.html"
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
