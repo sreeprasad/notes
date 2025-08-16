@@ -39,7 +39,7 @@ jobs:
               mkdir -p "$course/site"
               cp -f styles.css "$course/site/" || true
 
-              # Build all .tex files (POSIX-safe)
+              # Build all .tex files
               for f in "$d"/*.tex ; do
                 [ -e "$f" ] || continue
                 base="$(basename "$f" .tex)"
@@ -52,11 +52,11 @@ jobs:
                   --toc --number-sections \
                   -o "$course/site/${base}.html"
 
-                # Optional PDF
-                pandoc "$f" -o "$course/site/${base}.pdf"
+                # Optional PDF (keep or remove)
+                pandoc "$f" -o "$course/site/${base}.pdf" || true
               done
 
-              # Course index
+              # Course index: plain list of built pages
               if [ -f "$course/src/main.tex" ]; then
                 pandoc "$course/src/main.tex" \
                   --from=latex --to=html5 --mathjax \
@@ -72,7 +72,7 @@ jobs:
                     file="$(basename "$h")"
                     [ "$file" = "index.html" ] && continue
                     name="${file%.html}"
-                    printf '%s\n' "<li><a href=\"$file\">$name</a> &nbsp;(<a href=\"$name.pdf\">pdf</a>)</li>"
+                    printf '<li><a href="%s">%s</a> (<a href="%s.pdf">pdf</a>)</li>\n' "$file" "$name" "$name"
                   done
                   printf '%s\n' '</ul></body></html>'
                 } > "$course/site/index.html"
@@ -89,7 +89,7 @@ jobs:
               for c in _public/* ; do
                 [ -d "$c" ] || continue
                 name="$(basename "$c")"
-                printf '%s\n' "<li><a href=\"$name/\">$name</a></li>"
+                printf '<li><a href="%s/">%s</a></li>\n' "$name" "$name"
               done
               printf '%s\n' '</ul></body></html>'
             } > "_public/index.html"
