@@ -23,28 +23,25 @@ jobs:
           image: pandoc/latex:latest
           options: -v ${{ github.workspace }}:/data
           run: |
-            set -euo pipefail
+            set -eu
             cd /data
 
-            # Where we stage the site artifact for Pages
             rm -rf _public
             mkdir -p _public
-
-            # Copy shared assets to root of site
             cp -f styles.css _public/ || true
 
-            # Loop through each course folder that has a src/
+            # Build each course (folder/*/src)
             for d in */src ; do
               [ -d "$d" ] || continue
               course="${d%/src}"
               echo "Building course: $course"
 
               mkdir -p "$course/site"
-              # Ensure each course site has its own copy of styles.css
               cp -f styles.css "$course/site/" || true
 
-              shopt -s nullglob
+              # Build all .tex files (POSIX-safe)
               for f in "$d"/*.tex ; do
+                [ -e "$f" ] || continue
                 base="$(basename "$f" .tex)"
                 echo "  - $f -> $course/site/${base}.html"
                 pandoc "$f" \
@@ -55,47 +52,46 @@ jobs:
                   --toc --number-sections \
                   -o "$course/site/${base}.html"
 
-                # Optional PDF for download per file
+                # Optional PDF
                 pandoc "$f" -o "$course/site/${base}.pdf"
               done
 
-              # If there is a main.tex, make a friendly index.html; otherwise list all pages
-              if [ -f "$d/main.tex" ]; then
-                pandoc "$d/main.tex" \
+              # Course index
+              if [ -f "$course/src/main.tex" ]; then
+                pandoc "$course/src/main.tex" \
                   --from=latex --to=html5 --mathjax \
                   --template /data/_template.html \
                   --toc --number-sections \
                   -o "$course/site/index.html"
               else
-                # simple index for the course
                 {
-                  echo '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'"$course"'</title><link rel="stylesheet" href="styles.css"></head><body>'
-                  echo '<h1>'"$course"'</h1><ul>'
+                  printf '%s\n' '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'"$course"'</title><link rel="stylesheet" href="styles.css"></head><body>'
+                  printf '%s\n' '<h1>'"$course"'</h1><ul>'
                   for h in "$course/site/"*.html ; do
+                    [ -e "$h" ] || continue
                     file="$(basename "$h")"
                     [ "$file" = "index.html" ] && continue
                     name="${file%.html}"
-                    echo "<li><a href=\"$file\">$name</a> &nbsp;(<a href=\"$name.pdf\">pdf</a>)</li>"
+                    printf '%s\n' "<li><a href=\"$file\">$name</a> &nbsp;(<a href=\"$name.pdf\">pdf</a>)</li>"
                   done
-                  echo '</ul></body></html>'
+                  printf '%s\n' '</ul></body></html>'
                 } > "$course/site/index.html"
               fi
 
-              # Publish course site under _public/<course>/
               mkdir -p "_public/$course"
               cp -R "$course/site/." "_public/$course/"
             done
 
-            # Root landing page linking all courses
+            # Root landing page listing courses from the artifact
             {
-              echo '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Notes</title><link rel="stylesheet" href="styles.css"></head><body>'
-              echo '<h1>Course Notes</h1><ul>'
-              for c in */site ; do
+              printf '%s\n' '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Notes</title><link rel="stylesheet" href="styles.css"></head><body>'
+              printf '%s\n' '<h1>Course Notes</h1><ul>'
+              for c in _public/* ; do
                 [ -d "$c" ] || continue
-                course="${c%/site}"
-                echo "<li><a href=\"$course/\">$course</a></li>"
+                name="$(basename "$c")"
+                printf '%s\n' "<li><a href=\"$name/\">$name</a></li>"
               done
-              echo '</ul></body></html>'
+              printf '%s\n' '</ul></body></html>'
             } > "_public/index.html"
 
       - name: Upload artifact
@@ -113,3 +109,4 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
